@@ -1,0 +1,317 @@
+import math
+import numpy as np
+import QuantLib as ql
+
+#Below, you can see a simple function for pricing European Calls and Puts using 3 different pricing methods: Analytical, Binomial Tree and Monte Carlo
+def option_price_european(
+    S0, K, days_to_maturity, r, sigma, call=True, engine="BS", steps=200, paths=10000
+):
+    """
+    This function returns the price of a European Call with 3 different price engines: BS, BT and MC.
+    """
+
+    # Setting up the dates
+    today = ql.Date().todaysDate()
+    maturity = today + days_to_maturity
+
+    # Choosing the type of the option
+    if call:
+        option_type = ql.Option.Call
+    else:
+        option_type = ql.Option.Put
+
+    # Creating the payoff
+    payoff = ql.PlainVanillaPayoff(option_type, K)
+
+    europeanExercise = ql.EuropeanExercise(maturity)
+    europeanOption = ql.VanillaOption(payoff, europeanExercise)
+
+    # Setting up the option's characteristics
+    spot = ql.SimpleQuote(S0)
+    riskFreeTS = ql.YieldTermStructureHandle(
+        ql.FlatForward(today, r, ql.Actual365Fixed())
+    )
+    volTS = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(today, ql.NullCalendar(), sigma, ql.Actual365Fixed())
+    )
+
+    # We will use the analytical way of pricing the options
+    process = ql.BlackScholesProcess(ql.QuoteHandle(spot), riskFreeTS, volTS)
+
+    if engine == "BS":
+        engine = ql.AnalyticEuropeanEngine(process)
+    elif engine == "BT":
+        engine = ql.BinomialVanillaEngine(process, "crr", steps)
+    elif engine == "MC":
+        engine = ql.MCEuropeanEngine(
+            process, "PseudoRandom", timeSteps=steps, requiredSamples=paths
+        )
+    europeanOption.setPricingEngine(engine)
+
+    return europeanOption.NPV()  # NPV stands for Net Present Value
+
+# In the following code excerpt, we price our call three different ways:
+
+# Analytically with the Black Scholes model.
+# Numerically with a binomial tree.
+# Numerically with a Monte Carlo simulation.
+
+callBS = round(
+    option_price_european(
+        100, 100, 30, 0.05, 0.2, call=True, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+callBT = round(
+    option_price_european(
+        100, 100, 30, 0.05, 0.2, call=True, engine="BT", steps=200, paths=10000
+    ),
+    4,
+)
+callMC = round(
+    option_price_european(
+        100, 100, 30, 0.05, 0.2, call=True, engine="MC", steps=200, paths=10000
+    ),
+    4,
+)
+[callBS, callBT, callMC]
+
+#Now that we've priced the call option, let's price the put using these three methods.
+
+putBS = round(
+    option_price_european(
+        100, 100, 30, 0.05, 0.2, call=False, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+putBT = round(
+    option_price_european(
+        100, 100, 30, 0.05, 0.2, call=False, engine="BT", steps=200, paths=10000
+    ),
+    4,
+)
+putMC = round(
+    option_price_european(
+        100, 100, 30, 0.05, 0.2, call=False, engine="MC", steps=200, paths=10000
+    ),
+    4,
+)
+[putBS, putBT, putMC]
+
+#call−put=𝑆−𝐾𝑒^−(𝑟𝑡)
+#Let's check this for ourselves.
+#Going forward, we'll use the option prices from the analytical form. First, let's calculate the left-hand side of the put-call parity equation.
+
+c = callBS
+p = putBS
+round(c - p, 6)
+S = 100
+K = 100
+r = 0.05
+t = 30 / 365
+round(S - K * math.exp(-r * t), 6)
+
+#---------------------------
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Using the seaborn style "Whitegrid"
+sns.set_style("whitegrid")
+
+#In this section, we will illustrate the payoff and profit and loss (P&L) associated with an option. By specifying the option's characteristics, 
+#including its type (American or European) and position (long or short), we can effectively visualize the P&L across a range of underlying stock price levels.
+
+# Setting parameters
+
+S0 = 100
+K = 100
+stock_prices = np.linspace(80, 120, 500)
+
+call_payoff = np.maximum(stock_prices - K, 0)
+put_payoff = np.maximum(K - stock_prices, 0)
+
+# Plotting the payoff of a long call option
+
+fig, ax = plt.subplots()
+fig.set_size_inches(14, 7)
+
+ax.fill_between(
+    stock_prices, call_payoff, where=(call_payoff < 0), color="red", alpha=0.3
+)
+ax.fill_between(
+    stock_prices, call_payoff, where=(call_payoff > 0), color="green", alpha=0.3
+)
+ax.plot(stock_prices, call_payoff, color="blue", alpha=0.8, label="Payoff")
+ax.vlines(x=K, ymin=0, ymax=20, linestyle="--", color="red", label=f"Strike: {K}")
+ax.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax.set_title("Long Call Payoff")
+ax.legend()
+plt.show()
+
+# Plotting the Long Call option's P&L
+
+call_pnl = call_payoff - callBS
+
+fig, ax = plt.subplots()
+fig.set_size_inches(14, 7)
+ax.fill_between(stock_prices, call_pnl, where=(call_pnl < 0), color="red", alpha=0.3)
+ax.fill_between(stock_prices, call_pnl, where=(call_pnl > 0), color="green", alpha=0.3)
+ax.plot(stock_prices, call_pnl, color="blue", alpha=0.8, label="Payoff")
+ax.vlines(x=K, ymin=-3, ymax=18, linestyle="--", color="red", label=f"Strike: {K}")
+ax.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax.set_title("Long Call PnL")
+ax.legend()
+plt.show()
+
+# Plotting the Short Call option's P&L
+
+call_pnl_short = -call_pnl
+
+fig, ax = plt.subplots()
+fig.set_size_inches(14, 7)
+ax.fill_between(
+    stock_prices, call_pnl_short, where=(call_pnl_short < 0), color="red", alpha=0.3
+)
+ax.fill_between(
+    stock_prices, call_pnl_short, where=(call_pnl_short > 0), color="green", alpha=0.3
+)
+ax.plot(stock_prices, call_pnl_short, color="blue", alpha=0.8, label="Payoff")
+ax.vlines(x=K, ymin=-18, ymax=3, linestyle="--", color="red", label=f"Strike: {K}")
+ax.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax.set_title("Short Call PnL")
+ax.legend()
+plt.show()
+
+# Plotting both the Long and the Short call P&Ls together
+
+fig, (ax1, ax2) = plt.subplots(2, 1)
+fig.set_size_inches(14, 10)
+
+ax1.fill_between(stock_prices, call_pnl, where=(call_pnl < 0), color="red", alpha=0.3)
+ax1.fill_between(stock_prices, call_pnl, where=(call_pnl > 0), color="green", alpha=0.3)
+ax1.plot(stock_prices, call_pnl, color="blue", alpha=0.8, label="Payoff")
+ax1.vlines(x=K, ymin=-3, ymax=18, linestyle="--", color="red", label=f"Strike: {K}")
+ax1.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax1.set_title("Long Call PnL")
+ax1.legend()
+
+ax2.fill_between(
+    stock_prices, call_pnl_short, where=(call_pnl_short < 0), color="red", alpha=0.3
+)
+ax2.fill_between(
+    stock_prices, call_pnl_short, where=(call_pnl_short > 0), color="green", alpha=0.3
+)
+ax2.plot(stock_prices, call_pnl_short, color="blue", alpha=0.8, label="Payoff")
+ax2.vlines(x=K, ymin=-18, ymax=3, linestyle="--", color="red", label=f"Strike: {K}")
+ax2.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax2.set_title("Short Call PnL")
+ax2.legend()
+
+plt.show()
+
+# Plotting both the Long and the Short call P&Ls together
+
+fig, (ax1, ax2) = plt.subplots(2, 1)
+fig.set_size_inches(14, 10)
+
+ax1.fill_between(stock_prices, call_pnl, where=(call_pnl < 0), color="red", alpha=0.3)
+ax1.fill_between(stock_prices, call_pnl, where=(call_pnl > 0), color="green", alpha=0.3)
+ax1.plot(stock_prices, call_pnl, color="blue", alpha=0.8, label="Payoff")
+ax1.vlines(x=K, ymin=-3, ymax=18, linestyle="--", color="red", label=f"Strike: {K}")
+ax1.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax1.set_title("Long Call PnL")
+ax1.legend()
+
+ax2.fill_between(
+    stock_prices, call_pnl_short, where=(call_pnl_short < 0), color="red", alpha=0.3
+)
+ax2.fill_between(
+    stock_prices, call_pnl_short, where=(call_pnl_short > 0), color="green", alpha=0.3
+)
+ax2.plot(stock_prices, call_pnl_short, color="blue", alpha=0.8, label="Payoff")
+ax2.vlines(x=K, ymin=-18, ymax=3, linestyle="--", color="red", label=f"Strike: {K}")
+ax2.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax2.set_title("Short Call PnL")
+ax2.legend()
+
+plt.show()
+
+# Plotting a combined payoff of a Long call and a long put with the same strike (Option Straddle)
+
+pnl_combined_long_CallPut = call_pnl + put_pnl
+
+fig, ax = plt.subplots()
+fig.set_size_inches(14, 7)
+ax.fill_between(
+    stock_prices,
+    pnl_combined_long_CallPut,
+    where=(pnl_combined_long_CallPut < 0),
+    color="red",
+    alpha=0.3,
+)
+ax.fill_between(
+    stock_prices,
+    pnl_combined_long_CallPut,
+    where=(pnl_combined_long_CallPut > 0),
+    color="green",
+    alpha=0.3,
+)
+ax.plot(
+    stock_prices,
+    pnl_combined_long_CallPut,
+    color="black",
+    alpha=0.8,
+    label="Combined Payoff",
+)
+ax.plot(stock_prices, call_pnl, color="blue", alpha=0.3, label="Long Call")
+ax.plot(stock_prices, put_pnl, color="orange", alpha=0.3, label="Long Put")
+ax.vlines(x=K, ymin=-5, ymax=18, linestyle="--", color="red", label=f"Strike: {K}")
+ax.hlines(y=0, xmin=80, xmax=120, linestyle="--", color="black")
+ax.set_title("Long Call & Long Put")
+ax.legend()
+
+
+plt.show()
+
+callBS2 = round(
+    option_price_european(
+        100, 110, 30, 0.05, 0.2, call=True, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+putBS2 = round(
+    option_price_european(
+        100, 90, 30, 0.05, 0.2, call=False, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+print([callBS2, putBS2])
+
+callBS2 = round(
+    option_price_european(
+        100, 110, 30, 0.05, 0.2, call=True, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+putBS2 = round(
+    option_price_european(
+        100, 90, 30, 0.05, 0.2, call=False, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+print([callBS2, putBS2])
+
+callBS2 = round(
+    option_price_european(
+        100, 110, 30, 0.05, 0.2, call=True, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+putBS2 = round(
+    option_price_european(
+        100, 90, 30, 0.05, 0.2, call=False, engine="BS", steps=200, paths=10000
+    ),
+    4,
+)
+print([callBS2, putBS2])
