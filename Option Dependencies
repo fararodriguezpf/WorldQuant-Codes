@@ -1,0 +1,328 @@
+import matplotlib.patches as mpatches
+import QuantLib as ql
+from matplotlib import pyplot as plt
+
+#At this notebook, we are introducing a second function in order to price American vanilla options.
+
+def option_price_european(
+    S0, K, days_to_maturity, r, sigma, call=True, engine="BS", steps=200, paths=10000
+):
+    """
+    This function returns the price of a European Call with 3 different price engines: BS, BT and MC.
+    """
+
+    # Setting up the dates
+    today = ql.Date().todaysDate()
+    maturity = today + days_to_maturity
+
+    # Choosing the type of the option
+    if call:
+        option_type = ql.Option.Call
+    else:
+        option_type = ql.Option.Put
+
+    # Creating the payoff
+    payoff = ql.PlainVanillaPayoff(option_type, K)
+
+    europeanExercise = ql.EuropeanExercise(maturity)
+    europeanOption = ql.VanillaOption(payoff, europeanExercise)
+
+    # Setting up the option's characteristics
+    spot = ql.SimpleQuote(S0)
+    riskFreeTS = ql.YieldTermStructureHandle(
+        ql.FlatForward(today, r, ql.Actual365Fixed())
+    )
+    volTS = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(today, ql.NullCalendar(), sigma, ql.Actual365Fixed())
+    )
+
+    # We will use the analytical way of pricing the options
+    process = ql.BlackScholesProcess(ql.QuoteHandle(spot), riskFreeTS, volTS)
+
+    if engine == "BS":
+        engine = ql.AnalyticEuropeanEngine(process)
+    elif engine == "BT":
+        engine = ql.BinomialVanillaEngine(process, "crr", steps)
+    elif engine == "MC":
+        engine = ql.MCEuropeanEngine(
+            process, "PseudoRandom", timeSteps=steps, requiredSamples=paths
+        )
+    europeanOption.setPricingEngine(engine)
+
+    return europeanOption.NPV()  # NPV stands for Net Present Value
+
+--------------
+
+def option_price_american(S0, K, days_to_maturity, r, sigma, call=True, steps=300):
+    """
+    This Function returns the price of an American option using a binomial tree
+    """
+    # Setting up the dates
+    today = ql.Date().todaysDate()
+    maturity = today + days_to_maturity
+
+    # Choosing the type of the option
+    if call:
+        option_type = ql.Option.Call
+    else:
+        option_type = ql.Option.Put
+
+    # Creating the payoff
+    payoff = ql.PlainVanillaPayoff(option_type, K)
+
+    americanExercise = ql.AmericanExercise(today, maturity)
+    americanOption = ql.VanillaOption(payoff, americanExercise)
+
+    # Setting up the option's characteristics
+    spot = ql.SimpleQuote(S0)
+    riskFreeTS = ql.YieldTermStructureHandle(
+        ql.FlatForward(today, r, ql.Actual365Fixed())
+    )
+    volTS = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(today, ql.NullCalendar(), sigma, ql.Actual365Fixed())
+    )
+    process = ql.BlackScholesProcess(ql.QuoteHandle(spot), riskFreeTS, volTS)
+
+    # We will use a binomial tree in order to price the american options
+    engine = ql.BinomialVanillaEngine(process, "crr", steps)
+    americanOption.setPricingEngine(engine)
+    return americanOption.NPV()
+
+
+# Now, let's define a wrapper function to the opstrat function Option. We want to price an option using different stock prices, but keeping all other variables 
+# the same. Our CallOptionVsStock() function will use default values for everything except the stock price. It is not our intent to write a very general 
+# function, but just one that can help create plots that show how the option price varies with the underlying stock price.
+
+def CallOptionVsStock(S, K=100, t=30, sigma=0.20, r=0.05):
+    myCall = round(
+        option_price_european(
+            S, K, t, r, sigma, call=True, engine="BS", steps=200, paths=10000
+        ),
+        4,
+    )
+    return myCall
+
+# We'll define two more simple functions. First, we'll define a function, getCallPayoff(), that determines the call's payoff, which is the non-negative value of S-K or 0.
+
+# Second, we'll define a function, addCallPayoff(), that will add the call payoff to the price chart. Note, in addCallPayoff(), we take advantage of the Python function 
+# map, by mapping the getCallPayoff() function over each of the stock prices, and storing the results in a list of option prices.
+
+def getCallPayoff(S, K=100):
+    if S > K:
+        return S - K
+    return 0
+
+
+def addCallPayoff(K, rng=21):
+    stockP = range(K - 21, K + 21)
+    OptionP = list(map(getCallPayoff, stockP))
+    plt.plot(stockP, OptionP, linestyle="dotted")
+
+StockPrices = list(range(80, 120))
+OptionPrices = list(map(CallOptionVsStock, StockPrices))
+
+plt.plot(StockPrices, OptionPrices)
+plt.title("Call Option vs. Stock Price")
+plt.xlabel("Stock Price")
+plt.ylabel("Call Price")
+addCallPayoff(100)
+
+# Let's repeat the same process for puts. First, we'll define functions for PutOptionsVsStock(), getPutPayoff(), and addPutPayoff().
+
+def PutOptionVsStock(S, K=100, t=30, sigma=0.20, r=0.05):
+    myPut = round(
+        option_price_european(
+            S, K, t, r, sigma, call=False, engine="BS", steps=200, paths=10000
+        ),
+        4,
+    )
+    return myPut
+
+
+def getPutPayoff(S, K=100):
+    if S < K:
+        return K - S
+    return 0
+
+
+def addPutPayoff(K, rng=21):
+    stockP = range(K - 21, K + 21)
+    optionP = list(map(getPutPayoff, stockP))
+    plt.plot(stockP, optionP, linestyle="dotted")
+
+StockPrices = list(range(80, 120))
+OptionPrices = list(map(PutOptionVsStock, StockPrices))
+
+plt.plot(StockPrices, OptionPrices)
+plt.title("Put Option vs. Stock Price")
+plt.xlabel("Stock Price")
+plt.ylabel("Put Price")
+addPutPayoff(100)
+
+# So what if we switched the exercise style to American? 
+
+def AmericanPutOptionVsStock(S, K=100, t=180, sigma=0.20, r=0.05):
+    myPut = option_price_american(S, K, t, r, sigma, call=False, steps=300)
+    return myPut
+
+
+OptionPrices = list(map(AmericanPutOptionVsStock, StockPrices))
+
+# Graph the American option
+plt.plot(StockPrices, OptionPrices)
+plt.title("American and European Put Options vs. Stock Price")
+plt.xlabel("Stock Price")
+plt.ylabel("Put Price")
+addPutPayoff(100)
+
+# Graph the American option
+plt.plot(StockPrices, OptionPrices)
+
+# Graph the European option
+plt.plot(StockPrices, list(map(PutOptionVsStock, StockPrices)))
+
+# Add titles, payoff, labels and a legend
+plt.title("American and European Put Options vs. Stock Price")
+addPutPayoff(100)
+plt.xlabel("Stock Price")
+plt.ylabel("Put Price")
+patch1 = mpatches.Patch(color="blue", label="American")
+patch2 = mpatches.Patch(color="orange", label="European")
+plt.legend(handles=[patch1, patch2]);
+
+
+
+
+# Graph the American option
+plt.plot(StockPrices, OptionPrices)
+
+# Graph the European option
+plt.plot(StockPrices, list(map(PutOptionVsStock, StockPrices)))
+
+# Add titles, payoff, labels and a legend
+plt.title("American and European Put Options vs. Stock Price")
+addPutPayoff(100)
+plt.xlabel("Stock Price")
+plt.ylabel("Put Price")
+patch1 = mpatches.Patch(color="blue", label="American")
+patch2 = mpatches.Patch(color="orange", label="European")
+plt.legend(handles=[patch1, patch2]);
+
+StockPrices = list(range(80, 120))
+
+
+def PutOptionVsStock(S, K=100, t=31, sigma=0.30, r=0.05):
+    myPut = option_price_european(
+        S, K, t, r, sigma, call=False, engine="BS", steps=200, paths=10000
+    )
+    return myPut
+
+
+plt.plot(StockPrices, list(map(PutOptionVsStock, StockPrices)))
+plt.title("Put Option vs. Stock Price for different expirations")
+plt.xlabel("Stock Price")
+plt.ylabel("Call Price")
+
+
+def PutOptionVsStock(S, K=100, t=62, sigma=0.30, r=0.05):
+    myPut = option_price_european(
+        S, K, t, r, sigma, call=False, engine="BS", steps=200, paths=10000
+    )
+    return myPut
+
+
+plt.plot(StockPrices, list(map(PutOptionVsStock, StockPrices)))
+
+
+def PutOptionVsStock(S, K=100, t=93, sigma=0.30, r=0.05):
+    myPut = option_price_european(
+        S, K, t, r, sigma, call=False, engine="BS", steps=200, paths=10000
+    )
+    return myPut
+
+
+plt.plot(StockPrices, list(map(PutOptionVsStock, StockPrices)))
+addPutPayoff(100)
+patch1 = mpatches.Patch(color="blue", label="1 month")
+patch2 = mpatches.Patch(color="orange", label="2 months")
+patch3 = mpatches.Patch(color="green", label="3 months")
+plt.legend(handles=[patch1, patch2, patch3]);
+
+
+# Let's write CallOptionVsStock() to take two required arguments: the stock price and the volatility. Then, we'll pass lists (of the appropriate length) to the map function.
+
+def CallOptionVsStock(S, sigma, K=100, t=30, r=0.05):
+    myCall = option_price_european(
+        S, K, t, r, sigma, call=True, engine="BS", steps=200, paths=10000
+    )
+    return myCall
+
+
+for i in range(1, 4):
+    sigmas = [0.20 * i] * len(StockPrices)
+    OptionPrices = list(map(CallOptionVsStock, StockPrices, sigmas))
+    plt.plot(StockPrices, OptionPrices)
+
+patch1 = mpatches.Patch(color="blue", label=r"$\sigma$=20%")
+patch2 = mpatches.Patch(color="orange", label=r"$\sigma$=40%")
+patch3 = mpatches.Patch(color="green", label=r"$\sigma$=60%")
+plt.legend(handles=[patch1, patch2, patch3])
+addCallPayoff(100)
+
+def PutOptionVsStock(S, sigma, K=100, t=30, r=0.05):
+    myPut = option_price_european(
+        S, K, t, r, sigma, call=False, engine="BS", steps=200, paths=10000
+    )
+    return myPut
+
+
+for i in range(1, 4):
+    sigmas = [0.20 * i] * len(StockPrices)
+    OptionPrices = list(map(PutOptionVsStock, StockPrices, sigmas))
+    plt.plot(StockPrices, OptionPrices)
+
+patch1 = mpatches.Patch(color="blue", label=r"$\sigma$=20%")
+patch2 = mpatches.Patch(color="orange", label=r"$\sigma$=40%")
+patch3 = mpatches.Patch(color="green", label=r"$\sigma$=60%")
+plt.legend(handles=[patch1, patch2, patch3])
+addPutPayoff(100)
+
+# Let's examine one more sensitivity: how the option prices vary with interest rates. Imagine we have three different interest rates: 5%, 10%, and 15%
+
+def CallOptionVsStock(S, r, K=100, t=91, sigma=0.50):
+    myCall = option_price_european(
+        S, K, t, r, sigma, call=True, engine="BS", steps=200, paths=10000
+    )
+    return myCall
+
+
+for i in range(1, 4):
+    rates = [0.05 * i] * len(StockPrices)
+    OptionPrices = list(map(CallOptionVsStock, StockPrices, rates))
+    plt.plot(StockPrices, OptionPrices)
+
+patch1 = mpatches.Patch(color="blue", label="rate=5%")
+patch2 = mpatches.Patch(color="orange", label="rate=10%")
+patch3 = mpatches.Patch(color="green", label="rate=15%")
+plt.legend(handles=[patch1, patch2, patch3])
+addCallPayoff(100)
+
+def PutOptionVsStock(S, r, K=100, t=91, sigma=0.50):
+    myPut = option_price_european(
+        S, K, t, r, sigma, call=False, engine="BS", steps=200, paths=10000
+    )
+    return myPut
+
+
+for i in range(1, 4):
+    rates = [0.05 * i] * len(StockPrices)
+    OptionPrices = list(map(PutOptionVsStock, StockPrices, rates))
+    plt.plot(StockPrices, OptionPrices)
+
+patch1 = mpatches.Patch(color="blue", label="rate=5%")
+patch2 = mpatches.Patch(color="orange", label="rate=10%")
+patch3 = mpatches.Patch(color="green", label="rate=15%")
+plt.legend(handles=[patch1, patch2, patch3])
+addPutPayoff(100)
+
+
