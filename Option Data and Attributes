@@ -1,0 +1,223 @@
+import datetime
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import pandas as pd
+import yfinance as yf
+from yahoo_fin import options
+
+def options_chain(symbol):
+    tk = yf.Ticker(symbol)
+    # Expiration dates
+    exps = tk.options
+
+    # Get options for each expiration
+    options = pd.DataFrame()
+    for e in exps:
+        opt = tk.option_chain(e)
+        opt = pd.DataFrame().append(opt.calls).append(opt.puts)
+        opt["expirationDate"] = e
+        options = options.append(opt, ignore_index=True)
+
+    # Bizarre error in `yfinance` that gives the wrong expiration date
+    # Add 1 day to get the correct expiration date
+    options["expirationDate"] = pd.to_datetime(
+        options["expirationDate"]
+    ) + datetime.timedelta(days=1)
+    options["dte"] = (
+        options["expirationDate"] - datetime.datetime.today()
+    ).dt.days / 365
+
+    # Boolean column if the option is a CALL
+    options["CALL"] = options["contractSymbol"].str[4:].apply(lambda x: "C" in x)
+
+    # options[['bid', 'ask', 'strike']] = options[['bid', 'ask', 'strike']].apply(pd.to_numeric)
+    options[["bid", "ask", "strike", "volume", "Implied Volatility"]] = options[
+        ["bid", "ask", "strike", "volume", "Implied Volatility"]
+    ].apply(pd.to_numeric)
+    options["mark"] = (
+        options["bid"] + options["ask"]
+    ) / 2  # Calculate the midpoint of the bid-ask
+
+    # Drop unnecessary and meaningless columns
+    options = options.drop(
+        columns=[
+            "contractSize",
+            "currency",
+            "change",
+            "percentChange",
+            "lastTradeDate",
+            "lastPrice",
+        ]
+    )
+
+    return options
+
+# Now, let's count the number of different expiration dates.
+
+nflx_dates = options.get_expiration_dates("nflx")
+len(nflx_dates)
+list(nflx_dates)
+
+# Next, let's get all the calls.
+try:
+    callsNflx = options.get_calls("nflx")
+except:  # noQA E722
+    # to load data from local file in case of any disruptions
+    callsNflx = pd.read_csv("nflx_calls.csv")
+
+callsNflx["Open Interest"] = (
+    callsNflx["Open Interest"].astype(str).str.replace("-", "0").astype(float)
+)
+list(callsNflx.columns)
+
+callsNflx.head()
+callsNflx.dtypes
+
+#The data we have on options includes:
+
+  1. The Contract Name. This is similar to a CUSIP, ISIN, SEDOL, ticker, or identifier.
+  2. The Last Trade Date. This is the date of the most recent activity. If an option is inactive, you may encounter a date from a long time ago.
+  3. Strike. The strike level of the option.
+  4. Last Price. Trades in the market occur at a specific price. This is the most recent one.
+  5. Bid. Market participants willing to buy agree to do so at the bid price. This is a quote rather than a trade.
+  6. Ask. Market participants willing to sell agree to do so at the ask price. This is also known as the offer price. Again, 
+this is quote data rather than trade data. Just to clarify: Last Price refers to data that actually traded. Bid and Ask refer to 
+price levels offered by market makers to buy and sell, respectively.
+ 7.  Change. This gives the change in price on the day. Positive change means prices increased on the day; negative changes mean prices decreased.
+ 8.  % Chg. This gives the percent change. This is usually more helpful than the level change because it is scaled relative to the option's price.
+  9. Volume. This gives the number of contracts that traded today.
+  10. Open Interest. This gives the number of contracts outstanding for that particular option. This is sometimes confused with volume.
+  11. Implied Volatility. Of all the option's inputs, volatility is the most important. The other numeric inputs, stock price, strike level, risk-free rate,
+and dividend yield, are easily observed in the market. The volatility is the one number that is key to the option's price. If we are given the price of an
+option, we can imply what volatility was used to achieve that price. This means that we had agreement on all the other parameters. When we imply the 
+volatility from the option's price, we compute the implied probability.
+
+
+numStrikes = callsNflx["Strike"].count()
+numStrikes
+callsNflx["Strike"]
+
+callStrikes = list(callsNflx["Strike"])
+callOpenInt = list(callsNflx["Open Interest"])
+plt.plot(callStrikes, callOpenInt)
+plt.xlabel("Call Strikes")
+plt.ylabel("Call Open Interest");
+
+plt.xlim([300, 500])
+plt.plot(callStrikes, callOpenInt)
+plt.xlabel("Strike")
+plt.ylabel("Open Interest");
+
+
+
+try:
+    putsNflx = options.get_puts("nflx")
+except:  # noqa E722
+    # to load data from local file in case of any disruptions
+    putsNflx = pd.read_csv("nflx_puts.csv")
+
+for index in putsNflx.index:
+    if "-" == putsNflx["Volume"][index]:
+        putsNflx.loc[index, "Volume"] = 0
+
+putsNflx["Open Interest"] = (
+    putsNflx["Open Interest"].astype(str).str.replace("-", "0").astype(float)
+)
+numPutStrikes = putsNflx["Strike"].count()
+numPutStrikes
+
+putStrikes = list(putsNflx["Strike"])
+putOpenInt = list(putsNflx["Open Interest"])
+plt.plot(putStrikes, putOpenInt)
+plt.xlabel("Put Strikes")
+plt.ylabel("Put Open Interest");
+
+plt.xlim([300, 500])
+plt.plot(putStrikes, putOpenInt)
+plt.xlabel("Strike")
+plt.ylabel("Open Interest");
+
+# There's a problem with volume. Contracts with no volume used '-' instead of 0. This data cleaning is an important step.
+# The following for loop will replace instances of '-' with a 0.
+
+for index in callsNflx.index:
+    if "-" == callsNflx["Volume"][index]:
+        callsNflx.loc[index, "Volume"] = 0
+callsNflx.Volume = callsNflx.Volume.astype(float)
+
+for index in putsNflx.index:
+    if "-" == putsNflx["Volume"][index]:
+        putsNflx.loc[index, "Volume"] = 0
+
+putsNflx.Volume = putsNflx.Volume.astype(float)
+
+callVolume = list(callsNflx["Volume"])
+putVolume = list(putsNflx["Volume"])
+
+# Open Interest
+callDf = pd.DataFrame()
+callDf["Strikes"] = callStrikes
+callDf["CallOpenInt"] = callOpenInt
+callDf["CallVolume"] = callVolume
+
+putDf = pd.DataFrame()
+putDf["Strikes"] = putStrikes
+putDf["PutOpenInt"] = putOpenInt
+putDf["PutVolume"] = putVolume
+
+df = callDf.merge(putDf)
+df = df[(df["Strikes"] > 300) & (df["Strikes"] < 400)]
+list(df.dtypes)
+
+plt.xlim([300, 400])
+plt.plot(list(df["Strikes"]), list(df["CallOpenInt"]))
+plt.plot(list(df["Strikes"]), list(df["PutOpenInt"]))
+plt.title("Open Interest vs. Strike Level")
+plt.xlabel("Strike")
+plt.ylabel("Open Interest")
+
+patch1 = mpatches.Patch(color="blue", label="Call Open Interest")
+patch2 = mpatches.Patch(color="orange", label="Put Open Interest")
+plt.legend(handles=[patch1, patch2]);
+
+def PutCallRatioOpenInterest(df):
+    pcroi = sum(df["PutOpenInt"]) / sum(df["CallOpenInt"])
+    return round(pcroi, 4)
+
+
+PutCallRatioOpenInterest(df)
+
+def PutCallRatioVolume(df):
+
+    pcv = sum(df["PutVolume"]) / sum(df["CallVolume"])
+    return round(pcv, 4)
+
+
+PutCallRatioVolume(df)
+
+
+___
+info = {}
+for date in nflx_dates:
+    info[date] = options.get_options_chain("nflx")
+type(info)
+exp_dates = list(info.keys())
+exp_dates
+z1 = info[exp_dates[0]]
+type(z1)
+z1.keys()
+z2 = z1["calls"]
+type(z2)
+z2["Strike"].count()
+z2.columns
+z3 = z2[(z2["Strike"] >= 330) & (z2["Strike"] <= 350)]
+z3
+
+#Bid-Ask Spread
+# Compute the bid-ask spread
+z4 = z2[(z2["Strike"] >= 300) & (z2["Strike"] <= 400)]
+plt.plot(list(z4["Strike"]), list(z4["Ask"] - z4["Bid"]))
+plt.title("Bid-Ask Spread as a Function of Strike")
+plt.xlabel("Strike")
+plt.ylabel("Bid-Ask Spread");
