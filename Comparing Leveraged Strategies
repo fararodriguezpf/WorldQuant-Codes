@@ -1,0 +1,272 @@
+# In this lesson, let's get some real-time pricing of stocks and options.
+
+import math
+import pandas as pd
+import QuantLib as ql
+import requests
+import yfinance as yf
+from yahoo_fin import options
+
+# We can construct a function for communicating with AlphaVantage API using requests
+
+
+def Alpha_Vantage_data(apikey="demo", endpoint="TIME_SERIES_DAILY", symbol="IBM"):
+    # Creating the URL
+    url = f"https://www.alphavantage.co/query?function={endpoint}&symbol={symbol}&apikey={apikey}"
+    response = requests.get(url)
+
+    # We keep the part of the json that contains the financial data
+    data = response.json()["Time Series (Daily)"]
+
+    # Creating a dataframe with datetime as index and converting every input to float (from object with means that all floats were identified as strings)
+    df = pd.DataFrame(data).T
+    df.index = pd.to_datetime(df.index)
+    df = df.astype(float)
+
+    return df
+
+# You can create an apikey in order to test the free endpoints. If you additionally have a premium key, you will be able to change the endpoint parameter as well.
+# If you try to download data whose response is not the same as one assumed in the function, the above function will not work.
+# You will need to change it as needed and expand it to accommodate more functionality
+IBM = Alpha_Vantage_data()
+IBM
+
+
+# Alternatively, we can use yfinance since NFLX close is given in its adjusted form.
+
+ts = yf.download("NFLX")["Adj Close"]
+
+ts.plot();
+
+
+
+# Suppose we have $100,000 to invest in a bullish strategy for Netflix.
+
+#1.  Buy stock using cash.
+# 2. Buy stock on margin.
+# 3. Buy a call option.
+# 4. Buy a bull spread (buy call at K, sell call at K+d).
+
+
+# First, we'll begin with the stock strategy. Let's suppose you buy NFLX at 333, and you plan to sell it at 345.
+nflx0 = 333
+nflx1 = 345
+def BuyShares(capital, sharePrice):
+    return math.floor(capital / sharePrice)
+myCapital = 100000
+numShares = BuyShares(myCapital, nflx0)
+numShares
+
+def CalculatePnL(sellPrice, buyPrice, numShares):
+    return round(numShares * (sellPrice - buyPrice), 2)
+
+cashStockPnL = CalculatePnL(nflx1, nflx0, numShares)
+cashStockPnL
+
+def CalculatePctReturn(fundsOut, fundsIn):
+    return round(fundsOut / fundsIn * 100, 2)
+
+CalculatePctReturn(cashStockPnL, myCapital)
+
+
+# Let's write a short function to calculate functions for buying stocks with borrowed funds.
+
+def FinanceShares(capital, sharePrice, financePct=0.50):
+    return BuyShares(capital / financePct, sharePrice)
+
+# We can finance 50% of our purchase.
+numLvgShares = FinanceShares(myCapital, nflx0)
+lvgPnL = CalculatePnL(nflx1, nflx0, numLvgShares)
+lvgPnL
+
+CalculatePctReturn(lvgPnL, myCapital)
+
+----
+#Call Option Strategy
+
+def option_price_european(
+    S0, K, days_to_maturity, r, sigma, call=True, engine="BS", steps=200, paths=10000
+):
+    """
+    This function returns the price of a European Call with 3 different price engines: BS, BT and MC.
+    """
+
+    # Setting up the dates
+    today = ql.Date().todaysDate()
+    maturity = today + days_to_maturity
+
+    # Choosing the type of the option
+    if call:
+        option_type = ql.Option.Call
+    else:
+        option_type = ql.Option.Put
+
+    # Creating the payoff
+    payoff = ql.PlainVanillaPayoff(option_type, K)
+
+    europeanExercise = ql.EuropeanExercise(maturity)
+    europeanOption = ql.VanillaOption(payoff, europeanExercise)
+
+    # Setting up the option's characteristics
+    spot = ql.SimpleQuote(S0)
+    riskFreeTS = ql.YieldTermStructureHandle(
+        ql.FlatForward(today, r, ql.Actual365Fixed())
+    )
+    volTS = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(today, ql.NullCalendar(), sigma, ql.Actual365Fixed())
+    )
+
+    # We will use the analytical way of pricing the options
+    process = ql.BlackScholesProcess(ql.QuoteHandle(spot), riskFreeTS, volTS)
+
+    if engine == "BS":
+        engine = ql.AnalyticEuropeanEngine(process)
+    elif engine == "BT":
+        engine = ql.BinomialVanillaEngine(process, "crr", steps)
+    elif engine == "MC":
+        engine = ql.MCEuropeanEngine(
+            process, "PseudoRandom", timeSteps=steps, requiredSamples=paths
+        )
+    europeanOption.setPricingEngine(engine)
+
+    return europeanOption.NPV()  # NPV stands for Net Present Value
+
+nflx_dates = options.get_expiration_dates("nflx")
+print(len(nflx_dates))
+
+try:
+    callsNflx = options.get_calls("nflx")
+except:  # noQA E722
+    # to load data from local file in case of any disruptions
+    callsNflx = pd.read_csv("nflx_calls.csv")
+
+list(callsNflx.columns)
+
+myOption = callsNflx[
+    (340 == callsNflx["Strike"])
+]  # If there is no option in a specific strike, chose another strike
+opt = myOption["Last Price"]
+myOption
+
+nflxOpt1 = round(
+    option_price_european(
+        S0=333,
+        K=340,
+        days_to_maturity=4,
+        r=0,
+        sigma=0.573,
+        call=True,
+        engine="BS",
+        steps=200,
+        paths=10000,
+    )
+    * 100,
+    2,
+)
+nflxOpt1
+
+# Number of options we can buy
+numCallOptions = BuyShares(myCapital, nflxOpt1)
+numCallOptions
+
+nflxOpt2 = round(
+    option_price_european(
+        S0=345,
+        K=340,
+        days_to_maturity=4,
+        r=0,
+        sigma=0.573,
+        call=True,
+        engine="BS",
+        steps=200,
+        paths=10000,
+    )
+    * 100,
+    2,
+)
+nflxOpt2
+
+optPnL = CalculatePnL(nflxOpt2, nflxOpt1, numCallOptions)
+optPnL
+
+CalculatePctReturn(optPnL, myCapital)
+
+---
+# Bull Spread Strategy
+
+nflxOpt1 = round(
+    option_price_european(
+        S0=333,
+        K=340,
+        days_to_maturity=4,
+        r=0,
+        sigma=0.573,
+        call=True,
+        engine="BS",
+        steps=200,
+        paths=10000,
+    )
+    * 100,
+    2,
+)
+
+nflxOpt2 = round(
+    option_price_european(
+        S0=333,
+        K=350,
+        days_to_maturity=4,
+        r=0,
+        sigma=0.573,
+        call=True,
+        engine="BS",
+        steps=200,
+        paths=10000,
+    )
+    * 100,
+    2,
+)
+
+print([nflxOpt1, nflxOpt2])
+nflxSpr1 = nflxOpt1 - nflxOpt2
+nflxOpt2 / 100
+
+# Plot
+
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+
+# Using the seaborn style "Whitegrid"
+sns.set_style("whitegrid")
+
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+
+# Using the seaborn style "Whitegrid"
+sns.set_style("whitegrid")
+
+
+---
+
+# Number of spread options
+nflxOptB = nflxOpt1 - nflxOpt2
+numSpreadOptions = BuyShares(myCapital, nflxOptB)
+numSpreadOptions
+
+# Number of spread options
+nflxOptB = nflxOpt1 - nflxOpt2
+numSpreadOptions = BuyShares(myCapital, nflxOptB)
+numSpreadOptions
+
+sprPnL = CalculatePnL(nflxSpr2, nflxSpr1, numSpreadOptions)
+sprPnL
+
+CalculatePctReturn(sprPnL, myCapital)
+
+
+
+
+
+
+
